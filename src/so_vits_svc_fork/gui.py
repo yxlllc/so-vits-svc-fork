@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import copy
 from logging import getLogger
 from pathlib import Path
 
@@ -81,6 +82,17 @@ def get_devices(
         d["index"] for d in devices if d["max_output_channels"] > 0
     ]
     return input_devices, output_devices, input_devices_indices, output_devices_indices
+
+
+def after_inference(window: sg.Window, path: Path, auto_play: bool, output_path: Path):
+    try:
+        LOG.info(f"Finished inference for {path.stem}{path.suffix}")
+        window["infer"].update(disabled=False)
+
+        if auto_play:
+            play_audio(output_path)
+    except Exception as e:
+        LOG.exception(e)
 
 
 def main():
@@ -503,6 +515,7 @@ def main():
     update_devices()
     with ProcessPool(max_workers=1) as pool:
         future: None | ProcessFuture = None
+        infer_futures: set[ProcessFuture] = set()
         while True:
             event, values = window.read(200)
             if event == sg.WIN_CLOSED:
@@ -541,8 +554,6 @@ def main():
             elif event == "config_path":
                 update_speaker()
             elif event == "infer":
-                from so_vits_svc_fork.inference.main import infer
-
                 input_path = Path(values["input_path"])
                 output_path = (
                     input_path.parent / f"{input_path.stem}.out{input_path.suffix}"
@@ -550,32 +561,46 @@ def main():
                 if not input_path.exists() or not input_path.is_file():
                     LOG.warning(f"Input path {input_path} does not exist.")
                     continue
+
                 try:
-                    infer(
-                        # paths
-                        model_path=Path(values["model_path"]),
-                        output_path=output_path,
-                        input_path=input_path,
-                        config_path=Path(values["config_path"]),
-                        # svc config
-                        speaker=values["speaker"],
-                        cluster_model_path=Path(values["cluster_model_path"])
-                        if values["cluster_model_path"]
-                        else None,
-                        transpose=values["transpose"],
-                        auto_predict_f0=values["auto_predict_f0"],
-                        cluster_infer_ratio=values["cluster_infer_ratio"],
-                        noise_scale=values["noise_scale"],
-                        f0_method=values["f0_method"],
-                        # slice config
-                        db_thresh=values["silence_threshold"],
-                        pad_seconds=values["pad_seconds"],
-                        chunk_seconds=values["chunk_seconds"],
-                        absolute_thresh=values["absolute_thresh"],
-                        device="cpu" if not values["use_gpu"] else get_optimal_device(),
+                    from so_vits_svc_fork.inference.main import infer
+
+                    LOG.info("Starting inference...")
+                    window["infer"].update(disabled=True)
+                    infer_future = pool.schedule(
+                        infer,
+                        kwargs=dict(
+                            # paths
+                            model_path=Path(values["model_path"]),
+                            output_path=output_path,
+                            input_path=input_path,
+                            config_path=Path(values["config_path"]),
+                            # svc config
+                            speaker=values["speaker"],
+                            cluster_model_path=Path(values["cluster_model_path"])
+                            if values["cluster_model_path"]
+                            else None,
+                            transpose=values["transpose"],
+                            auto_predict_f0=values["auto_predict_f0"],
+                            cluster_infer_ratio=values["cluster_infer_ratio"],
+                            noise_scale=values["noise_scale"],
+                            f0_method=values["f0_method"],
+                            # slice config
+                            db_thresh=values["silence_threshold"],
+                            pad_seconds=values["pad_seconds"],
+                            chunk_seconds=values["chunk_seconds"],
+                            absolute_thresh=values["absolute_thresh"],
+                            device="cpu"
+                            if not values["use_gpu"]
+                            else get_optimal_device(),
+                        ),
                     )
-                    if values["auto_play"]:
-                        pool.schedule(play_audio, args=[output_path])
+                    infer_future.add_done_callback(
+                        lambda _future: after_inference(
+                            window, input_path, values["auto_play"], output_path
+                        )
+                    )
+                    infer_futures.add(infer_future)
                 except Exception as e:
                     LOG.exception(e)
             elif event == "play_input":
@@ -654,6 +679,14 @@ def main():
                 except Exception as e:
                     LOG.exception(e)
                 future = None
+            for future in copy(infer_futures):
+                if future.done():
+                    LOG.error("Error in inference: ")
+                    try:
+                        future.result()
+                    except Exception as e:
+                        LOG.exception(e)
+                    infer_futures.remove(future)
         if future:
             future.cancel()
     window.close()

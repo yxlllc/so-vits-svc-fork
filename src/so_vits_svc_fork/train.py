@@ -8,8 +8,9 @@ from typing import Any
 
 import lightning.pytorch as pl
 import torch
-from lightning.pytorch.accelerators import TPUAccelerator
+from lightning.pytorch.accelerators import MPSAccelerator, TPUAccelerator
 from lightning.pytorch.loggers import TensorBoardLogger
+from lightning.pytorch.tuner import Tuner
 from torch.cuda.amp import autocast
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
@@ -21,6 +22,7 @@ import so_vits_svc_fork.utils
 
 from . import utils
 from .dataset import TextAudioCollate, TextAudioDataset
+from .logger import is_notebook
 from .modules.descriminators import MultiPeriodDiscriminator
 from .modules.losses import discriminator_loss, feature_loss, generator_loss, kl_loss
 from .modules.mel_processing import mel_spectrogram_torch
@@ -32,9 +34,14 @@ torch.set_float32_matmul_precision("high")
 
 
 class VCDataModule(pl.LightningDataModule):
+    batch_size: int
+
     def __init__(self, hparams: Any):
         super().__init__()
         self.__hparams = hparams
+        self.batch_size = hparams.train.batch_size
+        if not isinstance(self.batch_size, int):
+            self.batch_size = 1
         self.collate_fn = TextAudioCollate()
 
         # these should be called in setup(), but we need to calculate check_val_every_n_epoch
@@ -46,7 +53,7 @@ class VCDataModule(pl.LightningDataModule):
             self.train_dataset,
             # pin_memory=False,
             num_workers=min(cpu_count(), self.__hparams.train.get("num_workers", 4)),
-            batch_size=self.__hparams.train.batch_size,
+            batch_size=self.batch_size,
             collate_fn=self.collate_fn,
         )
 
@@ -74,7 +81,9 @@ def train(
     )
     LOG.info(f"Using strategy: {strategy}")
     trainer = pl.Trainer(
-        logger=TensorBoardLogger(model_path),
+        logger=TensorBoardLogger(
+            model_path, "lightning_logs", hparams.train.get("log_version", 0)
+        ),
         # profiler="simple",
         val_check_interval=hparams.train.eval_interval,
         max_epochs=hparams.train.epochs,
@@ -85,9 +94,39 @@ def train(
         if hparams.train.get("bf16_run", False)
         else 32,
         strategy=strategy,
-        callbacks=[pl.callbacks.RichProgressBar()],
+        callbacks=[pl.callbacks.RichProgressBar()] if not is_notebook() else None,
     )
+    tuner = Tuner(trainer)
     model = VitsLightning(reset_optimizer=reset_optimizer, **hparams)
+
+    # automatic batch size scaling
+    batch_size = hparams.train.batch_size
+    batch_split = str(batch_size).split("-")
+    batch_size = batch_split[0]
+    init_val = 2 if len(batch_split) <= 1 else int(batch_split[1])
+    max_trials = 25 if len(batch_split) <= 2 else int(batch_split[2])
+    if batch_size == "auto":
+        batch_size = "binsearch"
+    if batch_size in ["power", "binsearch"]:
+        model.tuning = True
+        tuner.scale_batch_size(
+            model,
+            mode=batch_size,
+            datamodule=datamodule,
+            steps_per_trial=1,
+            init_val=init_val,
+            max_trials=max_trials,
+        )
+        model.tuning = False
+    else:
+        batch_size = int(batch_size)
+    # automatic learning rate scaling is not supported for multiple optimizers
+    """if hparams.train.learning_rate  == "auto":
+    lr_finder = tuner.lr_find(model)
+    LOG.info(lr_finder.results)
+    fig = lr_finder.plot(suggest=True)
+    fig.savefig(model_path / "lr_finder.png")"""
+
     trainer.fit(model, datamodule=datamodule)
 
 
@@ -105,15 +144,16 @@ class VitsLightning(pl.LightningModule):
         )
         self.net_d = MultiPeriodDiscriminator(self.hparams.model.use_spectral_norm)
         self.automatic_optimization = False
+        self.learning_rate = self.hparams.train.learning_rate
         self.optim_g = torch.optim.AdamW(
             self.net_g.parameters(),
-            self.hparams.train.learning_rate,
+            self.learning_rate,
             betas=self.hparams.train.betas,
             eps=self.hparams.train.eps,
         )
         self.optim_d = torch.optim.AdamW(
             self.net_d.parameters(),
-            self.hparams.train.learning_rate,
+            self.learning_rate,
             betas=self.hparams.train.betas,
             eps=self.hparams.train.eps,
         )
@@ -125,18 +165,20 @@ class VitsLightning(pl.LightningModule):
         )
         self.optimizers_count = 2
         self.load(reset_optimizer)
+        self.tuning = False
 
     def on_train_start(self) -> None:
-        self.set_current_epoch(self._temp_epoch)
-        total_batch_idx = self._temp_epoch * len(self.trainer.train_dataloader)
-        self.set_total_batch_idx(total_batch_idx)
-        global_step = total_batch_idx * self.optimizers_count
-        self.set_global_step(global_step)
+        if not self.tuning:
+            self.set_current_epoch(self._temp_epoch)
+            total_batch_idx = self._temp_epoch * len(self.trainer.train_dataloader)
+            self.set_total_batch_idx(total_batch_idx)
+            global_step = total_batch_idx * self.optimizers_count
+            self.set_global_step(global_step)
 
-        # check if using tpu
-        if isinstance(self.trainer.accelerator, TPUAccelerator):
+        # check if using tpu or mps
+        if isinstance(self.trainer.accelerator, (TPUAccelerator, MPSAccelerator)):
             # patch torch.stft to use cpu
-            LOG.warning("Using TPU. Patching torch.stft to use cpu.")
+            LOG.warning("Using TPU/MPS. Patching torch.stft to use cpu.")
 
             def stft(
                 input: torch.Tensor,
@@ -328,11 +370,13 @@ class VitsLightning(pl.LightningModule):
             self.hparams.train.segment_size // self.hparams.data.hop_length,
         )
         y_hat_mel = mel_spectrogram_torch(y_hat.squeeze(1), self.hparams)
+        y_mel = y_mel[..., : y_hat_mel.shape[-1]]
         y = commons.slice_segments(
             y,
             ids_slice * self.hparams.data.hop_length,
             self.hparams.train.segment_size,
         )
+        y = y[..., : y_hat.shape[-1]]
 
         # generator loss
         y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = self.net_d(y, y_hat)
@@ -357,9 +401,6 @@ class VitsLightning(pl.LightningModule):
             loss_gen_all += loss_subband
 
         # log loss
-        self.log_(
-            "grad_norm_g", commons.clip_grad_value_(self.net_g.parameters(), None)
-        )
         self.log_("lr", self.optim_g.param_groups[0]["lr"])
         self.log_dict_(
             {
@@ -397,10 +438,15 @@ class VitsLightning(pl.LightningModule):
             )
 
         accumulate_grad_batches = self.hparams.train.get("accumulate_grad_batches", 1)
-        should_update = (batch_idx + 1) % accumulate_grad_batches == 0
+        should_update = (
+            batch_idx + 1
+        ) % accumulate_grad_batches == 0 or self.trainer.is_last_batch
         # optimizer
         self.manual_backward(loss_gen_all / accumulate_grad_batches)
         if should_update:
+            self.log_(
+                "grad_norm_g", commons.clip_grad_value_(self.net_g.parameters(), None)
+            )
             optim_g.step()
             optim_g.zero_grad()
         self.untoggle_optimizer(optim_g)
@@ -419,13 +465,13 @@ class VitsLightning(pl.LightningModule):
 
         # log loss
         self.log_("loss/d/total", loss_disc_all, prog_bar=True)
-        self.log_(
-            "grad_norm_d", commons.clip_grad_value_(self.net_d.parameters(), None)
-        )
 
         # optimizer
         self.manual_backward(loss_disc_all / accumulate_grad_batches)
         if should_update:
+            self.log_(
+                "grad_norm_d", commons.clip_grad_value_(self.net_d.parameters(), None)
+            )
             optim_d.step()
             optim_d.zero_grad()
         self.untoggle_optimizer(optim_d)
@@ -459,16 +505,18 @@ class VitsLightning(pl.LightningModule):
             utils.save_checkpoint(
                 self.net_g,
                 self.optim_g,
-                self.hparams.train.learning_rate,
+                self.learning_rate,
                 self.current_epoch + 1,  # prioritize prevention of undervaluation
-                Path(self.hparams.model_dir) / f"G_{self.total_batch_idx}.pth",
+                Path(self.hparams.model_dir)
+                / f"G_{self.total_batch_idx if self.hparams.train.get('ckpt_name_by_step', False) else self.current_epoch + 1}.pth",
             )
             utils.save_checkpoint(
                 self.net_d,
                 self.optim_d,
-                self.hparams.train.learning_rate,
+                self.learning_rate,
                 self.current_epoch + 1,
-                Path(self.hparams.model_dir) / f"D_{self.total_batch_idx}.pth",
+                Path(self.hparams.model_dir)
+                / f"D_{self.total_batch_idx if self.hparams.train.get('ckpt_name_by_step', False) else self.current_epoch + 1}.pth",
             )
             keep_ckpts = self.hparams.train.get("keep_ckpts", 0)
             if keep_ckpts > 0:

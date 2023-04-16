@@ -1379,14 +1379,14 @@ tool = ["click (>=6.0.0)"]
 
 [[package]]
 name = "gradio"
-version = "3.25.0"
+version = "3.27.0"
 description = "Python library for easily interacting with trained machine learning models"
 category = "main"
 optional = false
 python-versions = ">=3.7"
 files = [
-    {file = "gradio-3.25.0-py3-none-any.whl", hash = "sha256:7363352f35afc98df06c77d52d38d387ec9a20ba3ef5ee0a3dd2ed8374c0fa67"},
-    {file = "gradio-3.25.0.tar.gz", hash = "sha256:1bd8f830bfe0636d27c24a93bd79a7e3915b409789f339cc325ad964fcbe7e5e"},
+    {file = "gradio-3.27.0-py3-none-any.whl", hash = "sha256:5a9a152c52d652e90a67e0c9edbf2e1597df3d750254c3531e5b21b835166aaf"},
+    {file = "gradio-3.27.0.tar.gz", hash = "sha256:c6c02fa59f1b95fbc0b48fb95e08460424134fa5d035bb0930bb45bf43691b16"},
 ]
 
 [package.dependencies]
@@ -1395,7 +1395,7 @@ aiohttp = "*"
 altair = ">=4.2.0"
 fastapi = "*"
 ffmpy = "*"
-gradio-client = ">=0.0.8"
+gradio-client = ">=0.1.3"
 httpx = "*"
 huggingface-hub = ">=0.13.0"
 jinja2 = "*"
@@ -1419,18 +1419,19 @@ websockets = ">=10.0"
 
 [[package]]
 name = "gradio-client"
-version = "0.0.8"
+version = "0.1.3"
 description = "Python library for easily interacting with trained machine learning models"
 category = "main"
 optional = false
 python-versions = ">=3.7"
 files = [
-    {file = "gradio_client-0.0.8-py3-none-any.whl", hash = "sha256:75e158f6999cb4a7676aa136c9872c333994c79bf84b94e0247d7bb4517ba57f"},
-    {file = "gradio_client-0.0.8.tar.gz", hash = "sha256:0542dc874cba2c325d52af3595a83818996787e869198e3c55d391f4afa8fe24"},
+    {file = "gradio_client-0.1.3-py3-none-any.whl", hash = "sha256:1fce337c0fbc1badb17d2b6922d78af622901dd0312b77d85de7a9e22bbcc70a"},
+    {file = "gradio_client-0.1.3.tar.gz", hash = "sha256:7c0fe02521cad36a4afd01a663288735bb769a2e2bdbe0a16105d10bd6fa704b"},
 ]
 
 [package.dependencies]
 fsspec = "*"
+httpx = "*"
 huggingface-hub = ">=0.13.0"
 packaging = "*"
 requests = "*"
@@ -3755,14 +3756,14 @@ files = [
 
 [[package]]
 name = "pytest"
-version = "7.3.0"
+version = "7.3.1"
 description = "pytest: simple powerful testing with Python"
 category = "dev"
 optional = false
 python-versions = ">=3.7"
 files = [
-    {file = "pytest-7.3.0-py3-none-any.whl", hash = "sha256:933051fa1bfbd38a21e73c3960cebdad4cf59483ddba7696c48509727e17f201"},
-    {file = "pytest-7.3.0.tar.gz", hash = "sha256:58ecc27ebf0ea643ebfdf7fb1249335da761a00c9f955bcd922349bcb68ee57d"},
+    {file = "pytest-7.3.1-py3-none-any.whl", hash = "sha256:3799fa815351fea3a5e96ac7e503a96fa51cc9942c3753cda7651b93c1cfa362"},
+    {file = "pytest-7.3.1.tar.gz", hash = "sha256:434afafd78b1d78ed0addf160ad2b77a30d35d4bdf8af234fe621919d9ed15e3"},
 ]
 
 [package.dependencies]
@@ -4836,13 +4837,13 @@ widechars = ["wcwidth"]
 
 [[package]]
 name = "tensorboard"
-version = "2.12.1"
+version = "2.12.2"
 description = "TensorBoard lets you watch Tensors Flow"
 category = "main"
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "tensorboard-2.12.1-py3-none-any.whl", hash = "sha256:58f1c2a25b4829b9c48d2b1ec951dedc9325dcd1ea4b0f601d241d2887d0ed65"},
+    {file = "tensorboard-2.12.2-py3-none-any.whl", hash = "sha256:811ab0d27a139445836db9fd4f974424602c3dce12379364d379bcba7c783a68"},
 ]
 
 [package.dependencies]
@@ -5294,18 +5295,6 @@ files = [
 ]
 
 [[package]]
-name = "unidecode"
-version = "1.3.6"
-description = "ASCII transliterations of Unicode text"
-category = "main"
-optional = false
-python-versions = ">=3.5"
-files = [
-    {file = "Unidecode-1.3.6-py3-none-any.whl", hash = "sha256:547d7c479e4f377b430dd91ac1275d593308dce0fc464fb2ab7d41f82ec653be"},
-    {file = "Unidecode-1.3.6.tar.gz", hash = "sha256:fed09cf0be8cf415b391642c2a5addfc72194407caee4f98719e40ec2a72b830"},
-]
-
-[[package]]
 name = "urllib3"
 version = "1.26.15"
 description = "HTTP library with thread-safe connection pooling, file post, and more."
@@ -5698,4 +5687,4 @@ testing = ["big-O", "flake8 (<5)", "jaraco.functools", "jaraco.itertools", "more
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.8,<3.11"
-content-hash = "5a458cd52055f97fa6ae6cfa5bb324cb3c9d40f7d406299fb0fe5851363de192"
+content-hash = "5b33ef9ebc86cbbfbc5a0c514c774af5d719196328c6ce461b18d948a9abad21"

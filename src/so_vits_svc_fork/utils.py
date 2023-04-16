@@ -13,6 +13,7 @@ import matplotlib.pylab as plt
 import numpy as np
 import requests
 import torch
+import torch.backends.mps
 from cm_time import timer
 from fairseq import checkpoint_utils
 from fairseq.models.hubert.hubert import HubertModel
@@ -28,6 +29,8 @@ HUBERT_SAMPLING_RATE = 16000
 def get_optimal_device(index: int = 0) -> torch.device:
     if torch.cuda.is_available():
         return torch.device(f"cuda:{index % torch.cuda.device_count()}")
+    elif torch.backends.mps.is_available():
+        return torch.device("mps")
     else:
         try:
             import torch_xla.core.xla_model as xm  # noqa
@@ -221,7 +224,8 @@ def load_checkpoint(
 ) -> tuple[torch.nn.Module, torch.optim.Optimizer | None, float, int]:
     if not Path(checkpoint_path).is_file():
         raise FileNotFoundError(f"File {checkpoint_path} not found")
-    checkpoint_dict = torch.load(checkpoint_path, map_location="cpu")
+    with Path(checkpoint_path).open("rb") as f:
+        checkpoint_dict = torch.load(f, map_location="cpu", weights_only=True)
     iteration = checkpoint_dict["iteration"]
     learning_rate = checkpoint_dict["learning_rate"]
 
@@ -260,15 +264,16 @@ def save_checkpoint(
         state_dict = model.module.state_dict()
     else:
         state_dict = model.state_dict()
-    torch.save(
-        {
-            "model": state_dict,
-            "iteration": iteration,
-            "optimizer": optimizer.state_dict(),
-            "learning_rate": learning_rate,
-        },
-        checkpoint_path,
-    )
+    with Path(checkpoint_path).open("wb") as f:
+        torch.save(
+            {
+                "model": state_dict,
+                "iteration": iteration,
+                "optimizer": optimizer.state_dict(),
+                "learning_rate": learning_rate,
+            },
+            f,
+        )
 
 
 def clean_checkpoints(
